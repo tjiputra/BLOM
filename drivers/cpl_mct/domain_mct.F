@@ -26,7 +26,6 @@
       use shr_const_mod, only: SHR_CONST_REARTH
       use mod_types, only: r8
       use mod_xc
-      use mod_grid, only: scp2, plon, plat
 
       implicit none
 
@@ -37,6 +36,11 @@
       integer                  , intent(in)    :: lsize
       integer, dimension(lsize), intent(in)    :: perm
       integer                  , intent(in)    :: jjcpl
+
+      ! Include files
+
+#include "common_geo.h"
+#include "common_blocks.h"
 
       ! Local variables
 

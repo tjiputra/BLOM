@@ -1,5 +1,5 @@
 ! ------------------------------------------------------------------------------
-! Copyright (C) 2018-2020 Mats Bentsen
+! Copyright (C) 2018 Mats Bentsen
 !
 ! This file is part of BLOM.
 !
@@ -24,8 +24,6 @@ c --- This module contains routines for computing the freezing point of
 c --- sea water.
 c --- ------------------------------------------------------------------
 c
-      use mod_eos, only: atf, btf, ctf
-c
       implicit none
 c
       private
@@ -48,6 +46,10 @@ c --- ------------------------------------------------------------------
 c --- Freezing temperature as function of pressure and salinity.
 c --- ------------------------------------------------------------------
 c
+      implicit none
+c
+#include "common_eos.h"
+c
       real, intent(in) :: p      ! Pressure [g cm-1 s-2]
       real, intent(in) :: s      ! Salinity [g kg-1]
       real :: swtfrz
@@ -64,6 +66,10 @@ c --- ------------------------------------------------------------------
 c --- Freezing temperature as function of pressure and salinity.
 c --- ------------------------------------------------------------------
 c
+      implicit none
+c
+#include "common_eos.h"
+c
       real, intent(in) :: p(:)   ! Pressure [g cm-1 s-2]
       real, intent(in) :: s(:)   ! Salinity [g kg-1]
       real :: swtfrz(size(s))
@@ -79,6 +85,10 @@ c
 c --- ------------------------------------------------------------------
 c --- Freezing temperature as function of pressure and salinity.
 c --- ------------------------------------------------------------------
+c
+      implicit none
+c
+#include "common_eos.h"
 c
       real, intent(in) :: p(:,:) ! Pressure [g cm-1 s-2]
       real, intent(in) :: s(:,:) ! Salinity [g kg-1]

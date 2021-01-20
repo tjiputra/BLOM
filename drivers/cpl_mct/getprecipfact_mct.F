@@ -23,7 +23,6 @@
       
       use mod_types, only: r8
       use mod_xc
-      use mod_forcing, only: sprfac, prfac
 
       implicit none
 
@@ -31,6 +30,10 @@
 
       logical, intent(out)  :: lsend_precip_fact
       real(r8), intent(out) :: precip_fact
+
+      ! Include files
+
+#include "common_forc.h"
 
       lsend_precip_fact = sprfac
       precip_fact = prfac

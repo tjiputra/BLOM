@@ -155,9 +155,8 @@ c
       integer*4 ,save :: info=MPI_INFO_NULL
       character(len=3) :: stripestr
       character(len=9) :: stripestr2
-      integer ierr
 #endif
-      integer iotype,testio
+      integer ierr,iotype,testio
 
 c
 c --- Open file        

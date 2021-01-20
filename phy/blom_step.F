@@ -23,41 +23,27 @@ c --- ------------------------------------------------------------------
 c --- integrate a model time step
 c --- ------------------------------------------------------------------
 c
-      use mod_config, only: expcnf
-      use mod_time, only: date, nday_of_year, nstep1,
+      use mod_configuration, only: expcnf
+      use mod_time, only: date, nday_in_year, nday_of_year, nstep1,
      .                    nstep, nstep_in_day, delt1, step_time
-      use mod_timing, only: total_time, total_xio_time,
-     .                      auxil_total_time, getfrc_total_time,
-     .                      tmsmt1_total_time, advdif_total_time,
-     .                      sfcstr_total_time, momtum_total_time,
-     .                      pgforc_total_time, barotp_total_time,
-     .                      pbcor2_total_time, convec_total_time,
-     .                      diapfl_total_time, thermf_total_time,
-     .                      mxlayr_total_time, tmsmt2_total_time,
-     .                      diaacc_total_time, io_total_time,
-     .                      get_time
       use mod_xc, only: lp, mnproc, xctilr, xcsum
       use mod_swabs, only: updswa
-      use mod_tmsmt, only: tmsmt1, tmsmt2
-      use mod_eddtra, only: eddtra
-      use mod_advect, only: advect
-      use mod_pbcor, only: pbcor1, pbcor2
-      use mod_pgforc, only: pgforc
-      use mod_momtum, only: momtum
-      use mod_mxlayr, only: mxlayr
-      use mod_barotp, only: barotp
-      use mod_cmnfld, only: cmnfld
-      use mod_forcing, only: fwbbal
-      use mod_budget, only: budget_sums, budget_output
-      use mod_eddtra, only: eddtra
-      use mod_momtum, only: momtum
-      use mod_chkvar, only: chkvar
       use mod_dia
 c
       implicit none
 c
+#include "common_blocks.h"
+#include "common_forc.h"
+#ifdef TRC
+#  include "param_trc.h"
+#  include "common_trc.h"
+#endif
+#include "param_bud.h"
+#include "common_bud.h"
+#include "timing.h"
+c
       real q
-      integer i,m,n,mm,nn,k1m,k1n
+      integer i,j,l,m,n,mm,nn,k1m,k1n
 c
       real total_step_time,
      .     auxil_time ,
@@ -68,7 +54,7 @@ c
      .     momtum_time,
      .     pgforc_time,
      .     barotp_time,
-     .     pbcor2_time,
+     .     pbtcor_time,
      .     convec_time,
      .     diapfl_time,
      .     thermf_time,
@@ -76,6 +62,9 @@ c
      .     tmsmt2_time,
      .     diaacc_time,
      .     io_time
+c
+      real gettime
+      external gettime
 c
 c --- letter 'm' refers to mid-time level (example: dp(i,j,km) )
 c --- letter 'n' refers to old and new time level
@@ -87,7 +76,7 @@ c
       k1m=1+mm
       k1n=1+nn
 c
-      call budget_sums(1,n,nn)
+      if (cnsvdi) call stdbud(1,n,nn)
 c
       call step_time
 c
@@ -106,7 +95,20 @@ c
         call xctilr(vsflx(1-nbdy,1-nbdy,k1n), 1,kk, 1,1, halo_vv)
       endif
 c
-      auxil_time=get_time()
+c --- ------------------------------------------------------------------
+c --- Set parameters for time interpolation of climatological fields
+c --- ------------------------------------------------------------------
+c
+      xmi=(nday_of_year-1+mod(nstep,nstep_in_day)/real(nstep_in_day))
+     .    *12./real(nday_in_year)
+      l3mi=int(xmi)+1
+      xmi=xmi-real(l3mi-1)
+      l1mi=mod(l3mi+ 9,12)+1
+      l2mi=mod(l3mi+10,12)+1
+      l4mi=mod(l3mi   ,12)+1
+      l5mi=mod(l3mi+ 1,12)+1
+c
+      auxil_time=gettime()
 c
 c --- ------------------------------------------------------------------
 c --- Get forcing
@@ -120,89 +122,166 @@ c --- ------------------------------------------------------------------
 c
       call updswa
 c
-      getfrc_time=get_time()
+      getfrc_time=gettime()
 c
 cdiag write (lp,*) 'tmsmt1...'
       call tmsmt1(m,n,mm,nn,k1m,k1n)
-      tmsmt1_time=get_time()
+      tmsmt1_time=gettime()
 c
 cdiag write (lp,*) 'advdif...'
       call difest(m,n,mm,nn,k1m,k1n)
       call eddtra(m,n,mm,nn,k1m,k1n)
       call advect(m,n,mm,nn,k1m,k1n)
-      call pbcor1(m,n,mm,nn,k1m,k1n)
       call diffus(m,n,mm,nn,k1m,k1n)
-      advdif_time=get_time()
+      advdif_time=gettime()
 c
-      call budget_sums(2,n,nn)
-      auxil_time=auxil_time+get_time()
+      if (cnsvdi) call stdbud(2,n,nn)
+      auxil_time=auxil_time+gettime()
 c
 cdiag write (lp,*) 'sfcstr...'
       call sfcstr(m,n,mm,nn,k1m,k1n)
-      sfcstr_time=get_time()
+      sfcstr_time=gettime()
 c
 cdiag write (lp,*) 'pgforc...'
       call pgforc(m,n,mm,nn,k1m,k1n)
-      pgforc_time=get_time()
+      pgforc_time=gettime()
 c
 cdiag write (lp,*) 'momtum...'
       call momtum(m,n,mm,nn,k1m,k1n)
-      momtum_time=get_time()
+      momtum_time=gettime()
 c
 cdiag write (lp,*) 'convec...'
       call convec(m,n,mm,nn,k1m,k1n)
-      convec_time=get_time()
+      convec_time=gettime()
 c
-      call budget_sums(3,n,nn)
-      auxil_time=auxil_time+get_time()
+      if (cnsvdi) call stdbud(3,n,nn)
+      auxil_time=auxil_time+gettime()
 c
 cdiag write (lp,*) 'diapfl...'
       call diapfl(m,n,mm,nn,k1m,k1n)
-      diapfl_time=get_time()
+      diapfl_time=gettime()
 c
-      call budget_sums(4,n,nn)
-      auxil_time=auxil_time+get_time()
+      if (cnsvdi) call stdbud(4,n,nn)
+      auxil_time=auxil_time+gettime()
 c
 cdiag write (lp,*) 'thermf...'
       call thermf(m,n,mm,nn,k1m,k1n)
-      thermf_time=get_time()
+      thermf_time=gettime()
 c
 cdiag write (lp,*) 'mxlayr...'
       call mxlayr(m,n,mm,nn,k1m,k1n)
-      mxlayr_time=get_time()
+      mxlayr_time=gettime()
 c
 #ifdef TRC
 c --- update tracer due to non-passive processes
       call updtrc(m,n,mm,nn,k1m,k1n)
 #endif
 c
-      call budget_sums(5,n,nn)
-      auxil_time=auxil_time+get_time()
+      if (cnsvdi) call stdbud(5,n,nn)
+      auxil_time=auxil_time+gettime()
 c
 cdiag write (lp,*) 'barotp...'
       call barotp(m,n,mm,nn,k1m,k1n)
-      barotp_time=get_time()
+      barotp_time=gettime()
 c
-cdiag write (lp,*) 'pbcor2...'
-      call pbcor2(m,n,mm,nn,k1m,k1n)
-      pbcor2_time=get_time()
+cdiag write (lp,*) 'pbtcor...'
+      call pbtcor(m,n,mm,nn,k1m,k1n)
+      pbtcor_time=gettime()
 c
-      call budget_sums(6,m,mm)
-      auxil_time=auxil_time+get_time()
+      if (cnsvdi) call stdbud(6,m,mm)
+      auxil_time=auxil_time+gettime()
 c
 cdiag write (lp,*) 'tmsmt2...'
       call tmsmt2(m,n,mm,nn,k1m,k1n)
-      tmsmt2_time=get_time()
+      tmsmt2_time=gettime()
 c
       call cmnfld(m,n,mm,nn,k1m,k1n)
 c
-      call budget_sums(7,m,mm)
+      if (cnsvdi) call stdbud(7,m,mm)
 c
-      call fwbbal(m,n,mm,nn,k1m,k1n)
+      if (sprfac) call fwbbal(m,n,mm,nn,k1m,k1n)
 c
-      call budget_output(m)
+      if (cnsvdi) then
+        if (mnproc.eq.1.and.nstep.gt.nstep1+1) then
+          open (unit=nfu,file='salbud',position='append')
+          write (nfu,'(i8,6e12.4)') nstep-1,
+     .      (sdp(2,m)-sdp(1,m))/mass0,
+     .      (sdp(3,m)-sdp(2,m))/mass0,
+     .      (sdp(4,m)-sdp(3,m))/mass0,
+     .      (sdp(5,m)-sdp(4,m)+sf*g)/mass0,
+     .      (sdp(6,m)-sdp(5,m))/mass0,
+     .      (sdp(7,m)-sdp(6,m))/mass0
+          close (nfu)
+          open (unit=nfu,file='tembud',position='append')
+          write (nfu,'(i8,6e12.4)') nstep-1,
+     .      (tdp(2,m)-tdp(1,m))/mass0,
+     .      (tdp(3,m)-tdp(2,m))/mass0,
+     .      (tdp(4,m)-tdp(3,m))/mass0,
+     .      (tdp(5,m)-tdp(4,m)+tf*g/spcifh)/mass0,
+     .      (tdp(6,m)-tdp(5,m))/mass0,
+     .      (tdp(7,m)-tdp(6,m))/mass0
+          close (nfu)
+#ifdef TRC
+#  ifdef TKE
+          open (unit=nfu,file='tkebud',position='append')
+          write (nfu,'(i8,6e12.4)') nstep-1,
+     .      (tkedp(2,m)-tkedp(1,m))/mass0,
+     .      (tkedp(3,m)-tkedp(2,m))/mass0,
+     .      (tkedp(4,m)-tkedp(3,m))/mass0,
+     .      (tkedp(5,m)-tkedp(4,m))/mass0,
+     .      (tkedp(6,m)-tkedp(5,m))/mass0,
+     .      (tkedp(7,m)-tkedp(6,m))/mass0
+          close (nfu)
+#    ifdef GLS
+          open (unit=nfu,file='glsbud',position='append')
+          write (nfu,'(i8,6e12.4)') nstep-1,
+     .      (glsdp(2,m)-glsdp(1,m))/mass0,
+     .      (glsdp(3,m)-glsdp(2,m))/mass0,
+     .      (glsdp(4,m)-glsdp(3,m))/mass0,
+     .      (glsdp(5,m)-glsdp(4,m))/mass0,
+     .      (glsdp(6,m)-glsdp(5,m))/mass0,
+     .      (glsdp(7,m)-glsdp(6,m))/mass0
+          close (nfu)
+#    endif
+#  endif
+          open (unit=nfu,file='trcbud',position='append')
+          write (nfu,'(i8,6e12.4)') nstep-1,
+     .      (trdp(2,m)-trdp(1,m))/mass0,
+     .      (trdp(3,m)-trdp(2,m))/mass0,
+     .      (trdp(4,m)-trdp(3,m))/mass0,
+     .      (trdp(5,m)-trdp(4,m)+trf*g)/mass0,
+     .      (trdp(6,m)-trdp(5,m))/mass0,
+     .      (trdp(7,m)-trdp(6,m))/mass0
+          close (nfu)
+          open (unit=nfu,file='trcbudtot',position='append')
+          write (nfu,'(i8,7e18.10)') nstep-1,
+     .      trdp(1,m)/mass0,trdp(2,m)/mass0,trdp(3,m)/mass0,
+     .      trdp(4,m)/mass0,trdp(5,m)/mass0,trdp(6,m)/mass0,
+     .      trdp(7,m)/mass0
+          close (nfu)
+#endif
+        endif
+c$OMP PARALLEL DO
+        do j=1,jj
+          do l=1,isp(j)
+          do i=max(1,ifp(j,l)),min(ii,ilp(j,l))
+            util1(i,j)=(salflx(i,j)+salrlx(i,j))*scp2(i,j)*delt1
+            util2(i,j)=(surflx(i,j)+surrlx(i,j))*scp2(i,j)*delt1
+#ifdef TRC
+            util3(i,j)=trflx(1,i,j)*scp2(i,j)*delt1
+#endif
+          enddo
+          enddo
+        enddo
+c$OMP END PARALLEL DO
+        call xcsum(sf,util1,ips)
+        call xcsum(tf,util2,ips)
+#ifdef TRC
+        call xcsum(trf,util3,ips)
+#endif
+      endif
 c
-      auxil_time=auxil_time+get_time()
+      auxil_time=auxil_time+gettime()
 c
 c ----------------------------------------------------------------------
 c
@@ -213,7 +292,7 @@ c
       call chkvar(m,n,mm,nn,k1m,k1n)
 c
       call diaacc(m,n,mm,nn,k1m,k1n)
-      diaacc_time=get_time()
+      diaacc_time=gettime()
 c
       if (mod(nstep,nstep_in_day).eq.0.and.nday_of_year.eq.1) then
 c
@@ -247,7 +326,7 @@ c --- update total time spent by various tasks
       momtum_total_time=momtum_total_time+momtum_time
       pgforc_total_time=pgforc_total_time+pgforc_time
       barotp_total_time=barotp_total_time+barotp_time
-      pbcor2_total_time=pbcor2_total_time+pbcor2_time
+      pbtcor_total_time=pbtcor_total_time+pbtcor_time
       convec_total_time=convec_total_time+convec_time
       diapfl_total_time=diapfl_total_time+diapfl_time
       thermf_total_time=thermf_total_time+thermf_time
@@ -269,7 +348,7 @@ c
 c
         endif
 c
-        io_time=get_time()
+        io_time=gettime()
 c
 c --- ------------------------------------------------------------------
 c --- - write timing diagnostics to standard out
@@ -278,7 +357,7 @@ c
         io_total_time=io_total_time+io_time
         total_step_time=auxil_time +getfrc_time+tmsmt1_time+advdif_time
      .                 +sfcstr_time+momtum_time+pgforc_time+barotp_time
-     .                 +pbcor2_time+convec_time+diapfl_time+thermf_time
+     .                 +pbtcor_time+convec_time+diapfl_time+thermf_time
      .                 +mxlayr_time+tmsmt2_time+diaacc_time+io_time
         total_time=total_time+total_step_time
         total_xio_time=total_xio_time+total_step_time-io_time
@@ -301,7 +380,7 @@ c
           write (lp,'(f12.4,a,i8)') momtum_total_time*q,'% momtum'
           write (lp,'(f12.4,a,i8)') pgforc_total_time*q,'% pgforc'
           write (lp,'(f12.4,a,i8)') barotp_total_time*q,'% barotp'
-          write (lp,'(f12.4,a,i8)') pbcor2_total_time*q,'% pbcor2'
+          write (lp,'(f12.4,a,i8)') pbtcor_total_time*q,'% pbtcor'
           write (lp,'(f12.4,a,i8)') convec_total_time*q,'% convec'
           write (lp,'(f12.4,a,i8)') diapfl_total_time*q,'% diapfl'
           write (lp,'(f12.4,a,i8)') thermf_total_time*q,'% thermf'
@@ -317,11 +396,11 @@ c --- ------------------------------------------------------------------
 c --- - write time spent for current time step
 c --- ------------------------------------------------------------------
 c
-        io_time=get_time()
+        io_time=gettime()
         io_total_time=io_total_time+io_time
         total_step_time=auxil_time +getfrc_time+tmsmt1_time+advdif_time
      .                 +sfcstr_time+momtum_time+pgforc_time+barotp_time
-     .                 +pbcor2_time+convec_time+diapfl_time+thermf_time
+     .                 +pbtcor_time+convec_time+diapfl_time+thermf_time
      .                 +mxlayr_time+tmsmt2_time+diaacc_time+io_time
         total_time=total_time+total_step_time
         total_xio_time=total_xio_time+total_step_time-io_time

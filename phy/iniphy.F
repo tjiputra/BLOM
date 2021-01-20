@@ -23,15 +23,14 @@ c --- ------------------------------------------------------------------
 c --- Initialize physical parameterizations
 c --- ------------------------------------------------------------------
 c
-      use mod_config, only: expcnf
+      use mod_configuration, only: expcnf
       use mod_xc, only: lp, mnproc, xcstop
-      use mod_tidaldissip, only: read_tidaldissip
 c
       implicit none
 c
       if     (expcnf.eq.'cesm'.or.
      .        expcnf.eq.'ben02clim'.or.expcnf.eq.'ben02syn') then
-        call read_tidaldissip
+        call read_twedon
       elseif (expcnf.eq.'isomip1') then
       elseif (expcnf.eq.'isomip2') then
       else

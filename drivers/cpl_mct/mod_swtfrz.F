@@ -49,6 +49,8 @@ c --- ------------------------------------------------------------------
 c --- Retrieve freezing temperature from shared CESM function.
 c --- ------------------------------------------------------------------
 c
+      implicit none
+c
       real(r8), intent(in) :: p      ! Pressure [g cm-1 s-2]
       real(r8), intent(in) :: s      ! Salinity [g kg-1]
       real(r8) :: swtfrz
@@ -65,6 +67,8 @@ c --- ------------------------------------------------------------------
 c --- Retrieve freezing temperature from shared CESM function.
 c --- ------------------------------------------------------------------
 c
+      implicit none
+c
       real(r8), intent(in) :: p(:)   ! Pressure [g cm-1 s-2]
       real(r8), intent(in) :: s(:)   ! Salinity [g kg-1]
       real(r8) :: swtfrz(size(s))
@@ -80,6 +84,8 @@ c
 c --- ------------------------------------------------------------------
 c --- Retrieve freezing temperature from shared CESM function.
 c --- ------------------------------------------------------------------
+c
+      implicit none
 c
       real(r8), intent(in) :: p(:,:) ! Pressure [g cm-1 s-2]
       real(r8), intent(in) :: s(:,:) ! Salinity [g kg-1]
