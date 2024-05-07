@@ -1,6 +1,6 @@
 ! ------------------------------------------------------------------------------
 ! Copyright (C) 2000 HYCOM Consortium and contributors
-! Copyright (C) 2001-2020 Mats Bentsen, Lars Inge Enstad, Mehmet Ilicak
+! Copyright (C) 2001-2022 Mats Bentsen, Lars Inge Enstad, Mehmet Ilicak
 !
 ! This file is part of BLOM.
 !
@@ -26,9 +26,11 @@ c --- integration of the baroclinic momentum equation.
 c --- ------------------------------------------------------------------
 c
       use mod_types, only: r8
-      use mod_constants, only: g, alpha0, epsil, spval, onem, onemm
+      use mod_constants, only: g, alpha0, epsilp, epsilpl, spval, 
+     .                         onem, onemm
       use mod_time, only: delt1, dlt
       use mod_xc
+      use mod_vcoord, only: vcoord_type_tag, isopyc_bulkml
       use mod_grid, only: scqx, scqy, scpx, scpy, scux, scuy,
      .                    scvx, scvy, scp2, scu2, scv2, scq2i, scp2i,
      .                    scuxi, scvyi, corioq
@@ -37,7 +39,8 @@ c
      .                     pbu_p, pbv_p, ubcors_p, vbcors_p
       use mod_pgforc, only: wpgf, pgfx, pgfy, pgfxo, pgfyo
       use mod_tmsmt, only: wuv1, wuv2, dpuold, dpvold
-      use mod_diffusion, only: difmxp, difmxq, difwgt
+      use mod_diffusion, only: difmxp, difmxq, difwgt,
+     .                         mu_nonloc, mv_nonloc
       use mod_forcing, only: taux, tauy, ustarb
       use mod_utility, only: utotm, vtotm, utotn, vtotn, uflux, vflux,
      .                       uflux2, vflux2, uflux3, vflux3,
@@ -276,14 +279,14 @@ c
 c
         do i=max(0,ifp(j,l)),min(ii,ilp(j,l))
           ubot=(ubflxs_p(i  ,j,n)
-     .          /max(epsil,pbu(i  ,j,n)*scuy(i  ,j))
+     .          /max(epsilpl,pbu(i  ,j,n)*scuy(i  ,j))
      .         +ubflxs_p(i+1,j,n)
-     .          /max(epsil,pbu(i+1,j,n)*scuy(i+1,j)))*tsfac
+     .          /max(epsilpl,pbu(i+1,j,n)*scuy(i+1,j)))*tsfac
      .        +util1(i,j)/thkbop
           vbot=(vbflxs_p(i,j  ,n)
-     .          /max(epsil,pbv(i,j  ,n)*scvx(i,j  ))
+     .          /max(epsilpl,pbv(i,j  ,n)*scvx(i,j  ))
      .         +vbflxs_p(i,j+1,n)
-     .          /max(epsil,pbv(i,j+1,n)*scvx(i,j+1)))*tsfac
+     .          /max(epsilpl,pbv(i,j+1,n)*scvx(i,j+1)))*tsfac
      .        +util2(i,j)/thkbop
           ubbl=.5*sqrt(ubot*ubot+vbot*vbot)
           q=cb*(ubbl+cbar)
@@ -445,9 +448,9 @@ c
           do l=1,isu(j)
           do i=max(0,ifu(j,l)),min(ii+2,ilu(j,l))
             wgtja(i,j)=max(0.,min(1.,(pu(i,j,k+1)-pbu(i,j-1,m))
-     .                 /max(pu(i,j,k+1)-pu(i,j,k),epsil)))
+     .                 /max(pu(i,j,k+1)-pu(i,j,k),epsilp)))
             wgtjb(i,j)=max(0.,min(1.,(pu(i,j,k+1)-pbu(i,j+1,m))
-     .                 /max(pu(i,j,k+1)-pu(i,j,k),epsil)))
+     .                 /max(pu(i,j,k+1)-pu(i,j,k),epsilp)))
             uja(i,j)=(1.-wgtja(i,j))*utotn(i,j-1)
      .              +wgtja(i,j)*slip*utotn(i,j)
             ujb(i,j)=(1.-wgtjb(i,j))*utotn(i,j+1)
@@ -464,9 +467,9 @@ c
           do l=1,isv(j)
           do i=max(-1,ifv(j,l)),min(ii+2,ilv(j,l))
             wgtia(i,j)=max(0.,min(1.,(pv(i,j,k+1)-pbv(i-1,j,m))
-     .                 /max(pv(i,j,k+1)-pv(i,j,k),epsil)))
+     .                 /max(pv(i,j,k+1)-pv(i,j,k),epsilp)))
             wgtib(i,j)=max(0.,min(1.,(pv(i,j,k+1)-pbv(i+1,j,m))
-     .                 /max(pv(i,j,k+1)-pv(i,j,k),epsil)))
+     .                 /max(pv(i,j,k+1)-pv(i,j,k),epsilp)))
             via(i,j)=(1.-wgtia(i,j))*vtotn(i-1,j)
      .              +wgtia(i,j)*slip*vtotn(i,j)
             vib(i,j)=(1.-wgtib(i,j))*vtotn(i+1,j)
@@ -925,23 +928,33 @@ c
           enddo
         enddo
 c
-        if (k.eq.1) then
-c
 c --- --- store wind forcing in -stress-
 c
-          do j=1,jj
-            do l=1,isu(j)
-            do i=max(1,ifu(j,l)),min(ii,ilu(j,l))
-              stress(i,j)=-2.*taux(i,j)*g*scux(i,j)
-     .                     /(p(i,j,2)+p(i-1,j,2))
+        if (vcoord_type_tag.eq.isopyc_bulkml) then
+          if (k.eq.1) then
+            do j=1,jj
+              do l=1,isu(j)
+              do i=max(1,ifu(j,l)),min(ii,ilu(j,l))
+                stress(i,j)=-2.*taux(i,j)*g*scux(i,j)
+     .                       /(p(i,j,2)+p(i-1,j,2))
+              enddo
+              enddo
             enddo
+          else
+            do j=1,jj
+              do l=1,isu(j)
+              do i=max(1,ifu(j,l)),min(ii,ilu(j,l))
+                stress(i,j)=0.
+              enddo
+              enddo
             enddo
-          enddo
+          endif
         else
           do j=1,jj
             do l=1,isu(j)
             do i=max(1,ifu(j,l)),min(ii,ilu(j,l))
-              stress(i,j)=0.
+              stress(i,j)=-(mu_nonloc(i,j,k)-mu_nonloc(i,j,k+1))
+     .                     *taux(i,j)*g*scux(i,j)/max(onemm,dpu(i,j,km))
             enddo
             enddo
           enddo
@@ -1078,23 +1091,33 @@ c
           enddo
         enddo
 c
-        if (k.eq.1) then
-c
 c --- - store wind forcing in -stress-
 c
-          do j=1,jj
-            do l=1,isv(j)
-            do i=max(1,ifv(j,l)),min(ii,ilv(j,l))
-              stress(i,j)=-2.*tauy(i,j)*g*scvy(i,j)
-     .                     /(p(i,j,2)+p(i,j-1,2))
+        if (vcoord_type_tag.eq.isopyc_bulkml) then
+          if (k.eq.1) then
+            do j=1,jj
+              do l=1,isv(j)
+              do i=max(1,ifv(j,l)),min(ii,ilv(j,l))
+                stress(i,j)=-2.*tauy(i,j)*g*scvy(i,j)
+     .                       /(p(i,j,2)+p(i,j-1,2))
+              enddo
+              enddo
             enddo
+          else
+            do j=1,jj
+              do l=1,isv(j)
+              do i=max(1,ifv(j,l)),min(ii,ilv(j,l))
+                stress(i,j)=0.
+              enddo
+              enddo
             enddo
-          enddo
+          endif
         else
           do j=1,jj
             do l=1,isv(j)
             do i=max(1,ifv(j,l)),min(ii,ilv(j,l))
-              stress(i,j)=0.
+              stress(i,j)=-(mv_nonloc(i,j,k)-mv_nonloc(i,j,k+1))
+     .                     *tauy(i,j)*g*scvy(i,j)/max(onemm,dpv(i,j,km))
             enddo
             enddo
           enddo

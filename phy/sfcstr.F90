@@ -1,5 +1,5 @@
 ! ------------------------------------------------------------------------------
-! Copyright (C) 2004-2020 Mats Bentsen
+! Copyright (C) 2004-2021 Mats Bentsen, Mehmet Ilicak, Aleksi Nummelin
 !
 ! This file is part of BLOM.
 !
@@ -22,8 +22,8 @@ subroutine sfcstr(m, n, mm, nn, k1m, k1n)
 ! Get surface stress.
 ! ---------------------------------------------------------------------------
 
-    use mod_config, only: expcnf
-    use mod_xc, only: lp, mnproc, xcstop
+   use mod_config, only: expcnf
+   use mod_xc, only: lp, mnproc, xcstop
 
    implicit none
 

@@ -1,5 +1,5 @@
 ! ------------------------------------------------------------------------------
-! Copyright (C) 2020 Mats Bentsen
+! Copyright (C) 2020-2023 Mats Bentsen, Aleksi Nummmelin
 !
 ! This file is part of BLOM.
 !
@@ -33,9 +33,6 @@ module mod_grid
    ! Variable to be set in namelist:
    character(len = 256) :: &
       grfile     ! Name of file containing grid specification.
-
-   real(r8), dimension(1 - nbdy:idm + nbdy, 1 - nbdy:jdm + nbdy, kdm) :: &
-      sigmar     ! Reference potential density [g cm-3].
 
    real(r8), dimension(1 - nbdy:idm + nbdy, 1 - nbdy:jdm + nbdy, 4) :: &
       qclon, &   ! Longitude of q-cell corners [degrees].
@@ -79,12 +76,15 @@ module mod_grid
       coriop, &  ! Coriolis parameter at p-point [s-1].
       betafp, &  ! Derivative of Coriolis parameter with respect to meridional
                  ! distance at p-point [cm-1 s-1].
+      betatp, &  ! Topographic Rhines scale [cm-1 s-1].
       angle, &   ! Local angle between x-direction and eastward direction at
                  ! p-points [radians].
       cosang, &  ! Cosine of local angle between x-direction and eastward
                  ! direction at p-points [].
-      sinang     ! Sine of local angle between x-direction and eastward
+      sinang, &  ! Sine of local angle between x-direction and eastward
                  ! direction at p-points [].
+      hangle     ! Angle between the bottom slope vector and local
+                 ! x-direction [radians]
 
    real(r8) :: &
       area       ! Total grid area [cm2].
@@ -92,13 +92,14 @@ module mod_grid
    integer :: &
       nwp        ! Number of wet grid cells.
 
-   public :: grfile, sigmar, &
+   public :: grfile, &
              qclon, qclat, pclon, pclat, uclon, uclat, vclon, vclat, &
              scqx, scqy, scpx, scpy, scux, scuy, scvx, scvy, &
              scq2, scp2, scu2, scv2, scq2i, scp2i, &
              scuxi, scuyi, scvxi, scvyi, &
              qlon, qlat, plon, plat, ulon, ulat, vlon, vlat, &
-             depths, corioq, coriop, betafp, angle, cosang, sinang, &
+             depths, corioq, coriop, betafp, betatp, &
+             angle, cosang, sinang, hangle, &
              area, nwp, &
              inivar_grid
 
@@ -113,11 +114,6 @@ contains
 
    !$omp parallel do private(i, k)
       do j = 1 - nbdy, jj + nbdy
-         do k = 1, kk
-            do i = 1 - nbdy, ii + nbdy
-               sigmar(i, j, k) = spval
-            enddo
-         enddo
          do k = 1, 4
             do i = 1 - nbdy, ii + nbdy
                qclon(i, j, k) = spval
@@ -161,9 +157,11 @@ contains
             corioq(i, j) = spval
             coriop(i, j) = spval
             betafp(i, j) = spval
+            betatp(i, j) = spval
             angle(i, j) = spval
             cosang(i, j) = spval
             sinang(i, j) = spval
+            hangle(i,j) = spval
          enddo
       enddo
    !$omp end parallel do

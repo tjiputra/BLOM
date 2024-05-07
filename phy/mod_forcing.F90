@@ -1,5 +1,5 @@
 ! ------------------------------------------------------------------------------
-! Copyright (C) 2002-2020 Mats Bentsen, Jerry Tjiputra
+! Copyright (C) 2002-2023 Mats Bentsen, Jerry Tjiputra, Jörg Schwinger
 !
 ! This file is part of BLOM.
 !
@@ -55,8 +55,20 @@ module mod_forcing
       srxlim          ! Maximum absolute value of SSS difference in relaxation
                       ! [g kg-1].
    character(len = 256) :: &
-      scfile          ! Name of file containing monthly SSS climatology.
+      scfile, &       ! Name of file containing monthly SSS climatology.
+      wavsrc          ! Source of wave fields. Valid source: 'none', 'param',
+                      ! 'extern'.
 
+   ! Options derived from string options.
+   integer :: &
+      wavsrc_opt
+
+   ! Parameters:
+   integer, parameter :: &
+      ! Wave source options:
+      wavsrc_none        = 0, & ! No wave fields.
+      wavsrc_param       = 1, & ! Parameterized wave fields.
+      wavsrc_extern      = 2    ! Receive external wave fields.
 
    ! Constants used in forcing computations.
    real(r8) :: &
@@ -106,9 +118,15 @@ module mod_forcing
       ustarw, &       ! Friction velocity for open water [m s-1].
       slp, &          ! Sea-level pressure [kg m-1 s-2].
       abswnd, &       ! Wind speed at measurement height (zu) [m s-1].
+      lamult, &       ! Langmuir enhancement factor [].
+      lasl, &         ! Surface layer averaged Langmuir number [].
+      ustokes, &      ! u-component of surface Stokes drift [m s-1].
+      vstokes, &      ! v-component of surface Stokes drift [m s-1].
       atmco2, &       ! Atmospheric CO2 concentration [ppm].
       flxco2, &       ! Air-sea CO2 flux [kg m-2 s-1].
-      flxdms          ! Sea-air DMS flux [kg m-2 s-1].
+      flxdms, &       ! Sea-air DMS flux [kg m-2 s-1].
+      flxbrf, &       ! sea-air bromoform flux
+      atmbrf          ! atmospheric bromoform concentration
 
    real(r8), dimension(1 - nbdy:idm + nbdy,1 - nbdy:jdm + nbdy) :: &
       surflx, &       ! Surface thermal energy flux [W cm-2].
@@ -121,18 +139,32 @@ module mod_forcing
       tauy, &         ! v-component of surface stress [g cm-1 s-2].
       ustar, &        ! Surface friction velocity [cm s-1].
       ustarb, &       ! Bottom friction velocity [cm s-1].
-      ustar3, &       ! Friction velocity cubed [cm3 s-3].
-      buoyfl          ! Surface buoyancy flux [cm2 s-3].
+      ustar3          ! Friction velocity cubed [cm3 s-3].
+
+   ! Flux fields at model interfaces.
+
+   real(r8), dimension(1 - nbdy:idm + nbdy,1 - nbdy:jdm + nbdy, kk + 1) :: &
+      buoyfl, &       ! Buoyancy flux [cm2 s-3].
+      t_sw_nonloc, &  ! Non-local transport term that is the fraction of
+                      ! shortwave flux passing a layer interface [].
+      t_rs_nonloc, &  ! Non-local transport term that is the fraction of
+                      ! restoring heat flux passing a layer interface [].
+      s_br_nonloc, &  ! Non-local transport term that is the fraction of
+                      ! brine flux passing a layer interface [].
+      s_rs_nonloc     ! Non-local transport term that is the fraction of
+                      ! restoring salt flux passing a layer interface [].
 
    public :: aptflx, apsflx, ditflx, disflx, srxbal, sprfac, &
              trxday, srxday, trxdpt, srxdpt, trxlim, srxlim, scfile, &
+             wavsrc, wavsrc_opt, wavsrc_none, wavsrc_param, wavsrc_extern, &
              sref, tflxap, sflxap, tflxdi, sflxdi, nflxdi, &
              sstclm, ricclm, sssclm, prfac, eiacc, pracc, &
              swa, nsf, hmltfz, lip, sop, eva, rnf, rfi, fmltfz, sfl, ztx, mty, &
-             ustarw, slp, abswnd, atmco2, flxco2, flxdms, &
+             ustarw, slp, abswnd, lamult, lasl, ustokes, vstokes, &
+             atmco2, flxco2, flxdms, flxbrf, atmbrf, &
              surflx, surrlx, sswflx, salflx, brnflx, salrlx, taux, tauy, &
-             ustar, ustarb, ustar3, buoyfl, &
-             inivar_forcing, fwbbal
+             ustar, ustarb, ustar3, buoyfl, t_sw_nonloc, t_rs_nonloc, &
+             s_br_nonloc, s_rs_nonloc, inivar_forcing, fwbbal
 
 contains
 
@@ -141,7 +173,7 @@ contains
    ! Initialize variables related to forcing.
    ! ---------------------------------------------------------------------------
 
-      integer :: i, j, l
+      integer :: i, j, k, l
 
    !$omp parallel do private(i)
       do j = 1 - nbdy, jj + nbdy
@@ -163,9 +195,15 @@ contains
             ustarw(i, j) = spval
             slp(i, j) = spval
             abswnd(i, j) = spval
+            lamult(i, j) = spval
+            lasl(i, j) = spval
+            ustokes(i, j) = spval
+            vstokes(i, j) = spval
             atmco2(i, j) = spval
             flxco2(i, j) = spval
             flxdms(i, j) = spval
+            atmbrf(i, j) = spval
+            flxbrf(i, j) = spval
             surflx(i, j) = spval
             surrlx(i, j) = spval
             sswflx(i, j) = spval
@@ -177,21 +215,64 @@ contains
             ustar(i, j) = spval
             ustarb(i, j) = spval
             ustar3(i, j) = spval
-            buoyfl(i, j) = spval
          enddo
       enddo
    !$omp end parallel do
 
+   !$omp parallel do private(k, i)
+      do j = 1 - nbdy, jj + nbdy
+         do k = 1, kk + 1
+            do i = 1 - nbdy, ii + nbdy
+               buoyfl(i, j, k) = spval
+               t_sw_nonloc(i, j, k) = spval
+               t_rs_nonloc(i, j, k) = spval
+               s_br_nonloc(i, j, k) = spval
+               s_rs_nonloc(i, j, k) = spval
+            enddo
+         enddo
+      enddo
+   !$omp end parallel do
+
+   !$omp parallel do private(l, i, k)
+      do j = 1, jj
+         do l = 1, isp(j)
+         do i = max(1, ifp(j, l)), min(ii, ilp(j, l))
+            t_rs_nonloc(i, j, 1) = 1._r8
+            s_rs_nonloc(i, j, 1) = 1._r8
+         enddo
+         enddo
+         do k = 2, kk+1
+           do l = 1, isp(j)
+           do i = max(1, ifp(j, l)), min(ii, ilp(j, l))
+              t_rs_nonloc(i, j, k) = 0._r8
+              s_rs_nonloc(i, j, k) = 0._r8
+           enddo
+           enddo
+         enddo
+      enddo
+   !$omp end parallel do
    !$omp parallel do private(l, i)
       do j = 1, jj
          do l = 1, isp(j)
          do i = max(1, ifp(j, l)), min(ii, ilp(j, l))
             flxco2(i, j) = 0._r8
             flxdms(i, j) = 0._r8
+            flxbrf(i, j) = 0._r8
             ustar (i, j) = 0._r8
             ustarb(i, j) = 0._r8
-            buoyfl(i, j) = 0._r8
          enddo
+         enddo
+      enddo
+   !$omp end parallel do
+
+   !$omp parallel do private(k, l, i)
+      do j = 1, jj
+         do k = 1, kk + 1
+            do l = 1, isp(j)
+            do i = max(1, ifp(j, l)), min(ii, ilp(j, l))
+               buoyfl(i, j, k) = 0._r8
+            enddo
+            enddo
          enddo
       enddo
    !$omp end parallel do

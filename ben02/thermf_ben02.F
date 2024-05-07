@@ -1,5 +1,5 @@
 ! ------------------------------------------------------------------------------
-! Copyright (C) 2002-2020 Mats Bentsen
+! Copyright (C) 2002-2023 Mats Bentsen, Mehmet Ilicak
 !
 ! This file is part of BLOM.
 !
@@ -21,11 +21,13 @@
 c
 c --- NERSC version of thermf. 
 c
-      use mod_constants, only: spcifh, t0deg, epsil, onem
+      use mod_constants, only: spcifh, t0deg, alpha0, epsilt, onem,
+     .                         g2kg, kg2g, L_mks2cgs, M_mks2cgs
       use mod_time, only: nday_in_year, nday_of_year, nstep,
      .                    nstep_in_day, baclin,
      .                    xmi, l1mi, l2mi, l3mi, l4mi, l5mi
       use mod_xc
+      use mod_vcoord, only: vcoord_type_tag, isopyc_bulkml
       use mod_grid, only: scp2, plat, area
       use mod_state, only: dp, temp, saln, p
       use mod_swtfrz, only: swtfrz
@@ -35,7 +37,8 @@ c
      .                       trxdpt, srxdpt, trxlim, srxlim, srxbal,
      .                       swa, nsf, hmltfz, lip, sop, eva, rnf, rfi,
      .                       fmltfz, sfl, ustarw, surflx, surrlx,
-     .                       sswflx, salflx, brnflx, salrlx, ustar
+     .                       sswflx, salflx, brnflx, salrlx, ustar,
+     .                       t_rs_nonloc, s_rs_nonloc
       use mod_swabs, only: swbgal, swbgfc
       use mod_ben02, only: tsi_tda, tml_tda, sml_tda, alb_tda, fice_tda,
      .                     tsi, ntda, dfl, albw, alb,
@@ -52,7 +55,7 @@ c
       use mod_tracers, only: ntr, itrtke, itrgls, trc, trflx
 #    ifdef GLS
       use mod_diffusion, only: difdia
-      use mod_tke, only: gls_cmu0, zos, gls_p, gls_m, gls_n, vonKar
+      use mod_tke, only: gls_cmu0, Zos, gls_p, gls_m, gls_n, vonKar
 #    endif
 #  else
       use mod_tracers, only: ntr, trc, trflx
@@ -65,13 +68,13 @@ c
 c
       real, dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) :: vrtsfl
 c
-      integer i,j,k,l,m1,m2,m3,m4,m5
+      integer i,j,k,l,m1,m2,m3,m4,m5,ntld,kn,kl
       real dt,cpsw,rnf_fac,sag_fac,y,
-     .     dpotl,hotl,totl,sotl,dpmxl,hmxl,tmxl,smxl,tice_f,hice_min,
-     .     fice,hice,hsnw,tsrf,fice0,hice0,hsnw0,qsww,qnsw,tice,albi,
-     .     tsmlt,albi_h,qswi,dh,qsnwf,fcond,qdamp,qsmlt,qo2i,qbot,swfac,
-     .     dtml,q,volice,df,dvi,dvs,fwflx,sstc,rice,trxflx,sssc,srxflx,
-     .     totsfl,totwfl,sflxc,totsrp,totsrn
+     .     dpotl,hotl,totl,sotl,tice_f,hice_min,fice,hice,hsnw,tsrf,
+     .     fice0,hice0,hsnw0,qsww,qnsw,tice,albi,tsmlt,albi_h,qswi,dh,
+     .     qsnwf,fcond,qdamp,qsmlt,qo2i,qbot,swfac,dtml,q,volice,df,dvi,
+     .     dvs,fwflx,sstc,rice,dpmxl,hmxl,tmxl,trxflx,pbot,dprsi,sssc,
+     .     smxl,srxflx,totsfl,totwfl,sflxc,totsrp,totsrn,A_cgs2mks
 #ifdef TRC
       integer nt
       real, dimension(ntr,1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) ::
@@ -83,9 +86,11 @@ c
       real intp1d
       external intp1d
 c
+      A_cgs2mks=1./(L_mks2cgs**2)
+c
 c --- Due to conservation, the ratio of ice and snow density must be
 c --- equal to the ratio of ice and snow heat of fusion
-      if (abs(fuss/fusi-rhosnw/rhoice).gt.epsil) then
+      if (abs(fuss/fusi-rhosnw/rhoice).gt.epsilt) then
         if (mnproc.eq.1) then
           write (lp,*)
      .      'thermf: check consistency between snow/ice densities'
@@ -97,7 +102,7 @@ c --- equal to the ratio of ice and snow heat of fusion
 c
 c --- Set various constants
       dt=baclin                         ! Time step
-      cpsw=spcifh*1.e3                  ! Specific heat of seawater
+      cpsw=spcifh*M_mks2cgs                  ! Specific heat of seawater
       rnf_fac=baclin/real(nrfets*86400) ! Runoff reservoar detrainment rate
       sag_fac=exp(-sagets*dt)            ! Snow aging rate
 c
@@ -113,15 +118,16 @@ c --- and salt relaxation fluxes
       m5=mod(m3+ 1,48)+1
 c
 c --- Time level for diagnosing heat and salt relaxation fluxes
-      k=m3
+      ntld=m3
 c
-      if (ditflx.or.disflx) nflxdi(k)=nflxdi(k)+1
+      if (ditflx.or.disflx) nflxdi(ntld)=nflxdi(ntld)+1
 c
 c$OMP PARALLEL DO PRIVATE(
-c$OMP+ l,i,dpotl,hotl,totl,sotl,dpmxl,hmxl,tmxl,smxl,tice_f,hice_min,
-c$OMP+ fice,hice,hsnw,tsrf,fice0,hice0,hsnw0,qsww,qnsw,tice,albi,tsmlt,
-c$OMP+ albi_h,qswi,dh,qsnwf,fcond,qdamp,qsmlt,qo2i,qbot,swfac,dtml,q,
-c$OMP+ volice,df,dvi,dvs,fwflx,sstc,rice,trxflx,sssc,srxflx
+c$OMP+ l,i,dpotl,hotl,totl,sotl,tice_f,hice_min,fice,hice,hsnw,tsrf,
+c$OMP+ fice0,hice0,hsnw0,qsww,qnsw,tice,albi,tsmlt,albi_h,qswi,dh,qsnwf,
+c$OMP+ fcond,qdamp,qsmlt,qo2i,qbot,swfac,dtml,q,volice,df,dvi,dvs,fwflx,
+c$OMP+ sstc,rice,dpmxl,hmxl,tmxl,trxflx,pbot,dprsi,kn,kl,sssc,smxl,
+c$OMP+ srxflx
 #ifdef TRC
 c$OMP+ ,nt
 #endif
@@ -136,13 +142,6 @@ c --- --- layer, the mixed layer and ice/snow fraction
           hotl=dpotl/onem
           totl=temp(i,j,k1n)+t0deg
           sotl=saln(i,j,k1n)
-c
-          dpmxl=dp(i,j,1+nn)+dp(i,j,2+nn)
-          hmxl=dpmxl/onem
-          tmxl=(temp(i,j,1+nn)*dp(i,j,1+nn)
-     .         +temp(i,j,2+nn)*dp(i,j,2+nn))/dpmxl+t0deg
-          smxl=(saln(i,j,1+nn)*dp(i,j,1+nn)
-     .         +saln(i,j,2+nn)*dp(i,j,2+nn))/dpmxl
 c
           fice=ficem(i,j)
           hice=hicem(i,j)
@@ -326,7 +325,7 @@ c
 c --- ----- Ice volume that has to freeze to balance the heat budget
             volice=-(qsww+qnsw-q)*(1.-fice)*dt/fusi
 c
-            if (volice.gt.epsil) then
+            if (volice.gt.epsilt) then
 c
 c --- ------- New ice in the lead is formed with a specified thickness.
 c --- ------- Estimate the change in ice fraction
@@ -344,7 +343,7 @@ c
 c --- ----- If the lead is warming, let the fraction  (1 - fice)  go to
 c --- ----- warm the lead, and the fraction  fice  to melt ice laterally
             fice=fice-(swfac*qsww+qnsw)*fice*dt
-     .                /max(hice*fusi+hsnw*fuss,epsil)
+     .                /max(hice*fusi+hsnw*fuss,epsilt)
             if (fice.lt.0.) then
               fice=0.
               hice=0.
@@ -398,14 +397,14 @@ c --- --- Fresh water flux [kg m-2 s-1] (positive downwards)
           fwflx=eva(i,j)+lip(i,j)+sop(i,j)+rnf(i,j)+rfi(i,j)+fmltfz(i,j)
 c
 c --- --- Salt flux [kg m-2 s-1] (positive downwards)
-          sfl(i,j)=-sice*dvi*rhoice/dt*1.e-3
+          sfl(i,j)=-sice*dvi*rhoice/dt*g2kg
 c
 c --- --- Salt flux due to brine rejection of freezing sea
 c --- --- ice [kg m-2 m-1] (positive downwards)
-          brnflx(i,j)=max(0.,-sotl*fmltfz(i,j)*1.e-3+sfl(i,j))
+          brnflx(i,j)=max(0.,-sotl*fmltfz(i,j)*g2kg+sfl(i,j))
 c
 c --- --- Virtual salt flux [kg m-2 s-1] (positive downwards)
-          vrtsfl(i,j)=-sotl*fwflx*1.e-3
+          vrtsfl(i,j)=-sotl*fwflx*g2kg
 c
 c --- --- Store area weighted virtual salt flux and fresh water flux
           util1(i,j)=vrtsfl(i,j)*scp2(i,j)
@@ -415,11 +414,11 @@ c --- --- Heat flux due to melting/freezing [W m-2] (positive downwards)
           hmltfz(i,j)=(dvi*fusi+dvs*fuss)/dt
 c
 c --- --- Total heat flux in BLOM units [W cm-2] (positive upwards)
-          surflx(i,j)=-(swa(i,j)+nsf(i,j)+hmltfz(i,j))*1.e-4
+          surflx(i,j)=-(swa(i,j)+nsf(i,j)+hmltfz(i,j))*A_cgs2mks
 c
 c --- --- Short-wave heat flux in BLOM units [W cm-2] (positive
 c --- --- upwards)
-          sswflx(i,j)=-qsww*(1.-fice0)*1.e-4
+          sswflx(i,j)=-qsww*(1.-fice0)*A_cgs2mks
 c
 #ifdef TRC
 c --- ------------------------------------------------------------------
@@ -438,7 +437,7 @@ c
             if (nt.eq.itrgls) then
               trflx(nt,i,j)=-gls_n*difdia(i,j,1)*(gls_cmu0**gls_p)
      .                       *(trc(i,j,k1n,itrtke)**gls_m)
-     .                       *(vonKar**gls_n)*zos**(gls_n-1.)
+     .                       *(vonKar**gls_n)*Zos**(gls_n-1.)
               ttrsf(nt,i,j)=0.
               ttrav(nt,i,j)=0.
               cycle
@@ -452,7 +451,7 @@ c
             endif
 #    endif
 #  endif
-            trflx(nt,i,j)=-trc(i,j,k1n,nt)*fwflx*1.e-3
+            trflx(nt,i,j)=-trc(i,j,k1n,nt)*fwflx*g2kg
             ttrsf(nt,i,j)=trflx(nt,i,j)*scp2(i,j)
             ttrav(nt,i,j)=trc(i,j,k1n,nt)*scp2(i,j)
           enddo
@@ -465,7 +464,7 @@ c
           surrlx(i,j)=0.
 c
 c --- --- If  trxday>0 , apply relaxation towards observed sst
-          if (trxday.gt.epsil) then
+          if (trxday.gt.epsilt) then
             sstc=intp1d(sstclm(i,j,l1mi),sstclm(i,j,l2mi),
      .                  sstclm(i,j,l3mi),sstclm(i,j,l4mi),
      .                  sstclm(i,j,l5mi),xmi)
@@ -473,8 +472,39 @@ c --- --- If  trxday>0 , apply relaxation towards observed sst
      .                  ricclm(i,j,l3mi),ricclm(i,j,l4mi),
      .                  ricclm(i,j,l5mi),xmi)
             sstc=(1.-rice)*max(sstc,tice_f)+rice*tice_f
-            trxflx=spcifh*100.*min(hmxl,trxdpt)/(trxday*86400.)
-     .                        *min(trxlim,max(-trxlim,sstc-tmxl))
+            if (vcoord_type_tag == isopyc_bulkml) then
+              dpmxl=dp(i,j,1+nn)+dp(i,j,2+nn)
+              hmxl=dpmxl/onem
+              tmxl=(temp(i,j,1+nn)*dp(i,j,1+nn)
+     .             +temp(i,j,2+nn)*dp(i,j,2+nn))/dpmxl+t0deg
+              trxflx=spcifh*L_mks2cgs*min(hmxl,trxdpt)/(trxday*86400.)
+     .               *min(trxlim,max(-trxlim,sstc-tmxl))/alpha0
+            else
+              pbot=p(i,j,1)
+              do k=1,kk
+                kn=k+nn
+                pbot=pbot+dp(i,j,kn)
+              enddo
+              dprsi=1./min(trxdpt*onem,pbot-p(i,j,1))
+              t_rs_nonloc(i,j,1)=1.
+              tmxl=0.
+              do k=1,kk
+                kn=k+nn
+                t_rs_nonloc(i,j,k+1)=t_rs_nonloc(i,j,k)-dp(i,j,kn)*dprsi
+                if (t_rs_nonloc(i,j,k+1).lt.0.) then
+                  tmxl=tmxl+temp(i,j,kn)*t_rs_nonloc(i,j,k)+t0deg
+                  exit
+                else
+                  tmxl=tmxl+temp(i,j,kn)*(t_rs_nonloc(i,j,k  )
+     .                                   -t_rs_nonloc(i,j,k+1))
+                endif
+              enddo
+              do kl=k,kk
+                t_rs_nonloc(i,j,kl+1)=0.
+              enddo
+              trxflx=spcifh*L_mks2cgs*trxdpt/(trxday*86400.)
+     .               *min(trxlim,max(-trxlim,sstc-tmxl))/alpha0
+            endif
             surrlx(i,j)=-trxflx
           else
             trxflx=0.
@@ -490,18 +520,49 @@ c
 c --- --- If ditflx=.true., diagnose relaxation flux by accumulating the
 c --- --- relaxation flux
           if (ditflx) then
-            tflxdi(i,j,k)=tflxdi(i,j,k)+trxflx
+            tflxdi(i,j,ntld)=tflxdi(i,j,ntld)+trxflx
           endif
 c
           salrlx(i,j)=0.
 c
 c --- --- if  srxday>0 , apply relaxation towards observed sss
-          if (srxday.gt.epsil) then
+          if (srxday.gt.epsilt) then
             sssc=intp1d(sssclm(i,j,l1mi),sssclm(i,j,l2mi),
      .                  sssclm(i,j,l3mi),sssclm(i,j,l4mi),
      .                  sssclm(i,j,l5mi),xmi)
-            srxflx=100.*min(hmxl,srxdpt)/(srxday*86400.)
-     .                 *min(srxlim,max(-srxlim,sssc-smxl))
+            if (vcoord_type_tag == isopyc_bulkml) then
+              dpmxl=dp(i,j,1+nn)+dp(i,j,2+nn)
+              hmxl=dpmxl/onem
+              smxl=(saln(i,j,1+nn)*dp(i,j,1+nn)
+     .             +saln(i,j,2+nn)*dp(i,j,2+nn))/dpmxl
+              srxflx=L_mks2cgs*min(hmxl,srxdpt)/(srxday*86400.)
+     .               *min(srxlim,max(-srxlim,sssc-smxl))/alpha0
+            else
+              pbot=p(i,j,1)
+              do k=1,kk
+                kn=k+nn
+                pbot=pbot+dp(i,j,kn)
+              enddo
+              dprsi=1./min(srxdpt*onem,pbot-p(i,j,1))
+              s_rs_nonloc(i,j,1)=1.
+              smxl=0.
+              do k=1,kk
+                kn=k+nn
+                s_rs_nonloc(i,j,k+1)=s_rs_nonloc(i,j,k)-dp(i,j,kn)*dprsi
+                if (s_rs_nonloc(i,j,k+1).lt.0.) then
+                  smxl=smxl+saln(i,j,kn)*s_rs_nonloc(i,j,k)
+                  exit
+                else
+                  smxl=smxl+saln(i,j,kn)*(s_rs_nonloc(i,j,k  )
+     .                                   -s_rs_nonloc(i,j,k+1))
+                endif
+              enddo
+              do kl=k,kk
+                s_rs_nonloc(i,j,kl+1)=0.
+              enddo
+              srxflx=L_mks2cgs*srxdpt/(srxday*86400.)
+     .               *min(srxlim,max(-srxlim,sssc-smxl))/alpha0
+            endif
             salrlx(i,j)=-srxflx
             util3(i,j)=max(0.,salrlx(i,j))*scp2(i,j)
             util4(i,j)=min(0.,salrlx(i,j))*scp2(i,j)
@@ -519,7 +580,7 @@ c
 c --- --- If disflx=.true., diagnose relaxation flux by accumulating the
 c --- --- relaxation flux
           if (disflx) then
-            sflxdi(i,j,k)=sflxdi(i,j,k)+srxflx
+            sflxdi(i,j,ntld)=sflxdi(i,j,ntld)+srxflx
           endif
 c
 c --- ------------------------------------------------------------------
@@ -538,7 +599,7 @@ c --- --- Compute friction velocity (cm/s)
 c --- -------------------------------------------------------------------
 c
           ustar(i,j)=(min(ustari(i,j),.8e-2)*fice0
-     .               +ustarw(i,j)*(1.-fice0))*1.e2
+     .               +ustarw(i,j)*(1.-fice0))*L_mks2cgs
 c
         enddo
         enddo
@@ -556,7 +617,7 @@ c
       call xcsum(totwfl,util2,ips)
 c
 c --- Correction for the virtual salt flux [kg m-2 s-1]
-      sflxc=(-sref*totwfl*1.e-3-totsfl)/area
+      sflxc=(-sref*totwfl*g2kg-totsfl)/area
       if (mnproc.eq.1) then
         write (lp,*) 'thermf: totsfl/area,sflxc',totsfl/area,sflxc
       endif
@@ -567,8 +628,10 @@ c$OMP PARALLEL DO PRIVATE(l,i)
       do j=1,jj
         do l=1,isp(j)
         do i=max(1,ifp(j,l)),min(ii,ilp(j,l))
-          salflx(i,j)=-(vrtsfl(i,j)+sflxc+sfl(i,j))*1.e2
-          brnflx(i,j)=-brnflx(i,j)*1.e2
+          salflx(i,j)=-(vrtsfl(i,j)+sflxc+sfl(i,j))
+     .                 *(kg2g*(M_mks2cgs/L_mks2cgs**2))
+          brnflx(i,j)=-brnflx(i,j)
+     .                 *(kg2g*(M_mks2cgs/L_mks2cgs**2))
         enddo
         enddo
       enddo
@@ -577,7 +640,7 @@ c
 c --- if  srxday>0  and  srxbal=.true. , balance the sss relaxation flux
 c --- so the net input of salt in grid cells connected to the world
 c --- ocean is zero
-      if (srxday.gt.epsil.and.srxbal) then
+      if (srxday.gt.epsilt.and.srxbal) then
         call xcsum(totsrp,util3,ipwocn)
         call xcsum(totsrn,util4,ipwocn)
         if (abs(totsrp).gt.abs(totsrn)) then
@@ -632,14 +695,14 @@ cc
 c        tottrav=tottrav/area
 cc
 c        trflxc=(-tottrsf)/area
-c        trflxc=(-tottrav*totwfl*1.e-3-tottrsf)/area
+c        trflxc=(-tottrav*totwfl*g2kg-tottrsf)/area
         trflxc=0.
 c
 c$OMP PARALLEL DO PRIVATE(l,i)
         do j=1,jj
           do l=1,isp(j)
           do i=max(1,ifp(j,l)),min(ii,ilp(j,l))
-            trflx(nt,i,j)=-(trflx(nt,i,j)+trflxc)*1.e2
+            trflx(nt,i,j)=-(trflx(nt,i,j)+trflxc)*L_mks2cgs
           enddo
           enddo
         enddo
@@ -673,10 +736,15 @@ c
         call chksummsk(surflx,ip,1,'surflx')
         call chksummsk(sswflx,ip,1,'sswflx')
         call chksummsk(salflx,ip,1,'salflx')
+        call chksummsk(brnflx,ip,1,'brnflx')
         call chksummsk(surrlx,ip,1,'surrlx')
         call chksummsk(salrlx,ip,1,'salrlx')
         call chksummsk(iagem,ip,1,'iagem')
         call chksummsk(ustar,ip,1,'ustar')
+        if (vcoord_type_tag /= isopyc_bulkml) then
+          call chksummsk(t_rs_nonloc, ip, kk+1, 't_rs_nonloc')
+          call chksummsk(s_rs_nonloc, ip, kk+1, 's_rs_nonloc')
+        endif
       endif
 c
       return
